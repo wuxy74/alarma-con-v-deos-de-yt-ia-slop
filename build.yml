@@ -1,0 +1,654 @@
+name: Compilar APK del despertador
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear el proyecto de Android
+        run: |
+          cat > settings.gradle <<'FIN_ARCHIVO_0'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "DespertadorYoutube"
+          include ':app'
+          FIN_ARCHIVO_0
+          cat > build.gradle <<'FIN_ARCHIVO_1'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          FIN_ARCHIVO_1
+          cat > gradle.properties <<'FIN_ARCHIVO_2'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          FIN_ARCHIVO_2
+          mkdir -p app
+          cat > app/build.gradle <<'FIN_ARCHIVO_3'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.despertador.youtube'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId 'com.despertador.youtube'
+                  minSdk 27
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          FIN_ARCHIVO_3
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'FIN_ARCHIVO_4'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+              <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+              <application
+                  android:label="Despertador YouTube"
+                  android:allowBackup="false"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <activity
+                      android:name=".AlarmActivity"
+                      android:exported="false"
+                      android:launchMode="singleTask"
+                      android:showWhenLocked="true"
+                      android:turnScreenOn="true"
+                      android:directBootAware="true"
+                      android:excludeFromRecents="true" />
+
+                  <receiver
+                      android:name=".AlarmReceiver"
+                      android:exported="true"
+                      android:directBootAware="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.BOOT_COMPLETED" />
+                          <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                          <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                      </intent-filter>
+                  </receiver>
+
+              </application>
+          </manifest>
+          FIN_ARCHIVO_4
+          mkdir -p app/src/main/java/com/despertador/youtube
+          cat > app/src/main/java/com/despertador/youtube/MainActivity.java <<'FIN_ARCHIVO_5'
+          package com.despertador.youtube;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.app.NotificationManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.content.pm.PackageManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.text.format.DateFormat;
+          import android.view.View;
+          import android.widget.Button;
+          import android.widget.CheckBox;
+          import android.widget.EditText;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.TimePicker;
+          import android.widget.Toast;
+
+          public class MainActivity extends Activity {
+              private EditText urlInput;
+              private TimePicker picker;
+              private CheckBox diaria;
+              private TextView estado;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  SharedPreferences p = Scheduler.prefs(this);
+
+                  ScrollView scroll = new ScrollView(this);
+                  LinearLayout raiz = new LinearLayout(this);
+                  raiz.setOrientation(LinearLayout.VERTICAL);
+                  raiz.setPadding(dp(16), dp(32), dp(16), dp(16));
+                  scroll.addView(raiz);
+
+                  TextView titulo = new TextView(this);
+                  titulo.setText("Despertador con YouTube");
+                  titulo.setTextSize(24);
+                  raiz.addView(titulo);
+
+                  urlInput = new EditText(this);
+                  urlInput.setHint("Pega aquí el enlace del vídeo");
+                  urlInput.setSingleLine(true);
+                  urlInput.setText(p.getString("url", ""));
+                  raiz.addView(urlInput);
+
+                  picker = new TimePicker(this);
+                  picker.setIs24HourView(true);
+                  picker.setHour(p.getInt("hour", 7));
+                  picker.setMinute(p.getInt("minute", 0));
+                  raiz.addView(picker);
+
+                  diaria = new CheckBox(this);
+                  diaria.setText("Repetir cada día");
+                  diaria.setChecked(p.getBoolean("daily", false));
+                  raiz.addView(diaria);
+
+                  raiz.addView(boton("Programar alarma", v -> programar()));
+                  raiz.addView(boton("Cancelar alarma", v -> cancelar()));
+                  raiz.addView(boton("Probar ahora", v -> AlarmReceiver.disparar(this)));
+                  raiz.addView(boton("Dar permisos", v -> permisos()));
+
+                  estado = new TextView(this);
+                  estado.setTextSize(16);
+                  estado.setPadding(0, dp(16), 0, 0);
+                  raiz.addView(estado);
+
+                  setContentView(scroll);
+
+                  if (Build.VERSION.SDK_INT >= 33
+                          && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                          != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+                  }
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  actualizarEstado();
+              }
+
+              private int dp(int v) {
+                  return (int) (v * getResources().getDisplayMetrics().density);
+              }
+
+              private Button boton(String texto, View.OnClickListener l) {
+                  Button b = new Button(this);
+                  b.setText(texto);
+                  b.setOnClickListener(l);
+                  return b;
+              }
+
+              private void aviso(String t) {
+                  Toast.makeText(this, t, Toast.LENGTH_LONG).show();
+              }
+
+              private void programar() {
+                  String url = urlInput.getText().toString().trim();
+                  if (url.isEmpty()) {
+                      aviso("Pega primero el enlace del vídeo");
+                      return;
+                  }
+                  picker.clearFocus();
+                  int h = picker.getHour();
+                  int m = picker.getMinute();
+                  Scheduler.prefs(this).edit()
+                          .putString("url", url)
+                          .putInt("hour", h)
+                          .putInt("minute", m)
+                          .putBoolean("daily", diaria.isChecked())
+                          .apply();
+                  long t = Scheduler.programar(this, Scheduler.siguienteDisparo(h, m));
+                  if (t < 0) {
+                      aviso("Falta el permiso de alarmas exactas: actívalo y vuelve a programar");
+                      try {
+                          if (Build.VERSION.SDK_INT >= 31) {
+                              startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                      Uri.parse("package:" + getPackageName())));
+                          }
+                      } catch (Exception e) {
+                          // Sin pantalla de ajustes disponible.
+                      }
+                  }
+                  actualizarEstado();
+              }
+
+              private void cancelar() {
+                  Scheduler.cancelar(this);
+                  actualizarEstado();
+              }
+
+              private void permisos() {
+                  if (Build.VERSION.SDK_INT >= 33
+                          && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                          != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+                      return;
+                  }
+                  if (!Settings.canDrawOverlays(this)) {
+                      aviso("Activa «Mostrar sobre otras apps» para Despertador YouTube");
+                      startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                              Uri.parse("package:" + getPackageName())));
+                      return;
+                  }
+                  if (Build.VERSION.SDK_INT >= 34) {
+                      NotificationManager nm =
+                              (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                      if (!nm.canUseFullScreenIntent()) {
+                          aviso("Permite las notificaciones a pantalla completa");
+                          startActivity(new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                                  Uri.parse("package:" + getPackageName())));
+                          return;
+                      }
+                  }
+                  aviso("Todos los permisos están concedidos");
+              }
+
+              private void actualizarEstado() {
+                  SharedPreferences p = Scheduler.prefs(this);
+                  if (p.getBoolean("enabled", false)) {
+                      estado.setText("Alarma programada: "
+                              + DateFormat.format("EEEE d MMM, HH:mm", p.getLong("trigger", 0)));
+                  } else {
+                      estado.setText("No hay ninguna alarma programada");
+                  }
+              }
+          }
+          FIN_ARCHIVO_5
+          mkdir -p app/src/main/java/com/despertador/youtube
+          cat > app/src/main/java/com/despertador/youtube/AlarmActivity.java <<'FIN_ARCHIVO_6'
+          package com.despertador.youtube;
+
+          import android.app.Activity;
+          import android.app.NotificationManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.media.AudioAttributes;
+          import android.media.AudioManager;
+          import android.media.Ringtone;
+          import android.media.RingtoneManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.view.WindowManager;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceError;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+
+          public class AlarmActivity extends Activity {
+              private static final String JS_PLAY =
+                      "(function(){var v=document.querySelector('video');"
+                      + "if(v){v.muted=false;v.volume=1;var p=v.play();if(p&&p.catch){p.catch(function(){});}}})();";
+              private static final String JS_COMPROBAR =
+                      "(function(){var v=document.querySelector('video');"
+                      + "return !!(v&&!v.paused&&v.currentTime>0);})();";
+
+              private WebView web;
+              private Ringtone tono;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+              private int intentos = 0;
+
+              private final Runnable reproducir = new Runnable() {
+                  @Override
+                  public void run() {
+                      if (web == null) return;
+                      web.evaluateJavascript(JS_PLAY, null);
+                      intentos++;
+                      if (intentos < 15) handler.postDelayed(this, 2000);
+                  }
+              };
+
+              private final Runnable comprobar = new Runnable() {
+                  @Override
+                  public void run() {
+                      if (web == null) return;
+                      web.evaluateJavascript(JS_COMPROBAR, resultado -> {
+                          if (!"true".equals(resultado)) sonarDeRespaldo();
+                      });
+                  }
+              };
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  setShowWhenLocked(true);
+                  setTurnScreenOn(true);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+                  NotificationManager nm =
+                          (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                  nm.cancel(1);
+
+                  // Volumen multimedia al máximo.
+                  try {
+                      AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                      am.setStreamVolume(AudioManager.STREAM_MUSIC,
+                              am.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0);
+                  } catch (Exception e) {
+                      // Sin permiso para cambiar el volumen: se queda como esté.
+                  }
+
+                  LinearLayout raiz = new LinearLayout(this);
+                  raiz.setOrientation(LinearLayout.VERTICAL);
+                  raiz.setBackgroundColor(Color.BLACK);
+
+                  try {
+                      web = new WebView(this);
+                      WebSettings s = web.getSettings();
+                      s.setJavaScriptEnabled(true);
+                      s.setDomStorageEnabled(true);
+                      s.setMediaPlaybackRequiresUserGesture(false);
+                      web.setWebChromeClient(new WebChromeClient());
+                      web.setWebViewClient(new WebViewClient() {
+                          @Override
+                          public void onPageFinished(WebView view, String url) {
+                              handler.removeCallbacks(reproducir);
+                              intentos = 0;
+                              handler.post(reproducir);
+                          }
+
+                          @Override
+                          public void onReceivedError(WebView view, WebResourceRequest request,
+                                                      WebResourceError error) {
+                              if (request.isForMainFrame()) sonarDeRespaldo();
+                          }
+                      });
+                      raiz.addView(web, new LinearLayout.LayoutParams(
+                              LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+                  } catch (Throwable t) {
+                      web = null;
+                      sonarDeRespaldo();
+                  }
+
+                  Button parar = new Button(this);
+                  parar.setText("PARAR");
+                  parar.setTextSize(22);
+                  parar.setOnClickListener(v -> detener());
+                  int alto = (int) (90 * getResources().getDisplayMetrics().density);
+                  raiz.addView(parar, new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, alto));
+
+                  setContentView(raiz);
+
+                  if (web != null) {
+                      String url = Scheduler.normalizarUrl(Scheduler.prefs(this).getString("url", ""));
+                      web.loadUrl(url);
+                      // Si a los 30 s no suena el vídeo, entra el tono de respaldo.
+                      handler.postDelayed(comprobar, 30000);
+                  }
+                  // Parada automática a los 30 minutos.
+                  handler.postDelayed(this::detener, 30 * 60 * 1000L);
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+              }
+
+              private void sonarDeRespaldo() {
+                  if (tono != null) return;
+                  try {
+                      Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
+                      tono = RingtoneManager.getRingtone(this, uri);
+                      tono.setAudioAttributes(new AudioAttributes.Builder()
+                              .setUsage(AudioAttributes.USAGE_ALARM)
+                              .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                              .build());
+                      if (Build.VERSION.SDK_INT >= 28) tono.setLooping(true);
+                      tono.play();
+                  } catch (Throwable t) {
+                      // Sin tono de respaldo.
+                  }
+              }
+
+              private void limpiar() {
+                  handler.removeCallbacksAndMessages(null);
+                  if (tono != null) {
+                      tono.stop();
+                      tono = null;
+                  }
+                  if (web != null) {
+                      web.loadUrl("about:blank");
+                      web.destroy();
+                      web = null;
+                  }
+              }
+
+              private void detener() {
+                  limpiar();
+                  finish();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  limpiar();
+                  super.onDestroy();
+              }
+          }
+          FIN_ARCHIVO_6
+          mkdir -p app/src/main/java/com/despertador/youtube
+          cat > app/src/main/java/com/despertador/youtube/AlarmReceiver.java <<'FIN_ARCHIVO_7'
+          package com.despertador.youtube;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+
+          public class AlarmReceiver extends BroadcastReceiver {
+              static final String CANAL = "alarma";
+
+              @Override
+              public void onReceive(Context c, Intent intent) {
+                  String accion = intent.getAction();
+                  if (Intent.ACTION_BOOT_COMPLETED.equals(accion)
+                          || Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(accion)
+                          || Intent.ACTION_MY_PACKAGE_REPLACED.equals(accion)) {
+                      Scheduler.restaurar(c);
+                      return;
+                  }
+
+                  // Ha llegado la hora.
+                  SharedPreferences p = Scheduler.prefs(c);
+                  if (p.getBoolean("daily", false)) {
+                      Scheduler.programar(c, Scheduler.siguienteDisparo(
+                              p.getInt("hour", 7), p.getInt("minute", 0)));
+                  } else {
+                      p.edit().putBoolean("enabled", false).apply();
+                  }
+                  disparar(c);
+              }
+
+              static void disparar(Context c) {
+                  NotificationManager nm =
+                          (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+                  NotificationChannel canal = new NotificationChannel(
+                          CANAL, "Alarma", NotificationManager.IMPORTANCE_HIGH);
+                  canal.setSound(null, null);
+                  nm.createNotificationChannel(canal);
+
+                  Intent i = new Intent(c, AlarmActivity.class);
+                  i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  PendingIntent pi = PendingIntent.getActivity(c, 3, i,
+                          PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                  // Plan A: notificación con pantalla completa (lo que usan los despertadores).
+                  Notification n = new Notification.Builder(c, CANAL)
+                          .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                          .setContentTitle("Despertador")
+                          .setContentText("Toca para abrir el vídeo")
+                          .setCategory(Notification.CATEGORY_ALARM)
+                          .setAutoCancel(true)
+                          .setContentIntent(pi)
+                          .setFullScreenIntent(pi, true)
+                          .build();
+                  nm.notify(1, n);
+
+                  // Plan B: abrir la pantalla directamente (funciona si Android lo permite).
+                  try {
+                      c.startActivity(i);
+                  } catch (Exception e) {
+                      // Si Android lo bloquea, ya está el plan A.
+                  }
+              }
+          }
+          FIN_ARCHIVO_7
+          mkdir -p app/src/main/java/com/despertador/youtube
+          cat > app/src/main/java/com/despertador/youtube/Scheduler.java <<'FIN_ARCHIVO_8'
+          package com.despertador.youtube;
+
+          import android.app.AlarmManager;
+          import android.app.PendingIntent;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import java.util.Calendar;
+          import java.util.regex.Matcher;
+          import java.util.regex.Pattern;
+
+          public class Scheduler {
+              static final String PREFS = "despertador";
+              static final String ACCION_ALARMA = "com.despertador.youtube.ALARMA";
+
+              // Almacenamiento protegido por dispositivo: se puede leer aunque el móvil
+              // se acabe de encender y todavía no lo hayas desbloqueado.
+              static SharedPreferences prefs(Context c) {
+                  return c.createDeviceProtectedStorageContext()
+                          .getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+              }
+
+              static PendingIntent alarmaPending(Context c) {
+                  Intent i = new Intent(c, AlarmReceiver.class);
+                  i.setAction(ACCION_ALARMA);
+                  return PendingIntent.getBroadcast(c, 1, i,
+                          PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+              }
+
+              static long siguienteDisparo(int hora, int minuto) {
+                  Calendar cal = Calendar.getInstance();
+                  cal.set(Calendar.HOUR_OF_DAY, hora);
+                  cal.set(Calendar.MINUTE, minuto);
+                  cal.set(Calendar.SECOND, 0);
+                  cal.set(Calendar.MILLISECOND, 0);
+                  if (cal.getTimeInMillis() <= System.currentTimeMillis()) {
+                      cal.add(Calendar.DAY_OF_YEAR, 1);
+                  }
+                  return cal.getTimeInMillis();
+              }
+
+              // Devuelve la hora programada, o -1 si falta el permiso de alarmas exactas.
+              static long programar(Context c, long momento) {
+                  AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                  Intent abrir = new Intent(c, MainActivity.class);
+                  PendingIntent abrirPi = PendingIntent.getActivity(c, 2, abrir,
+                          PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+                  try {
+                      am.setAlarmClock(new AlarmManager.AlarmClockInfo(momento, abrirPi), alarmaPending(c));
+                  } catch (SecurityException e) {
+                      return -1;
+                  }
+                  prefs(c).edit().putBoolean("enabled", true).putLong("trigger", momento).apply();
+                  return momento;
+              }
+
+              static void cancelar(Context c) {
+                  AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
+                  am.cancel(alarmaPending(c));
+                  prefs(c).edit().putBoolean("enabled", false).apply();
+              }
+
+              // Se llama al reiniciar el móvil: Android borra las alarmas al apagarse.
+              static void restaurar(Context c) {
+                  SharedPreferences p = prefs(c);
+                  if (!p.getBoolean("enabled", false)) return;
+                  long momento = p.getLong("trigger", 0);
+                  long ahora = System.currentTimeMillis();
+                  if (momento > ahora) {
+                      programar(c, momento);
+                      return;
+                  }
+                  boolean diaria = p.getBoolean("daily", false);
+                  boolean reciente = ahora - momento < 15 * 60 * 1000L;
+                  if (diaria) {
+                      programar(c, siguienteDisparo(p.getInt("hour", 7), p.getInt("minute", 0)));
+                  } else {
+                      p.edit().putBoolean("enabled", false).apply();
+                  }
+                  // Si el móvil se encendió pocos minutos después de la hora, suena ya.
+                  if (reciente) AlarmReceiver.disparar(c);
+              }
+
+              static String normalizarUrl(String u) {
+                  u = (u == null) ? "" : u.trim();
+                  Matcher m = Pattern
+                          .compile("(?:youtu\\.be/|[?&]v=|/shorts/|/embed/|/live/)([A-Za-z0-9_-]{11})")
+                          .matcher(u);
+                  if (m.find()) return "https://m.youtube.com/watch?v=" + m.group(1);
+                  if (!u.startsWith("http")) u = "https://" + u;
+                  return u;
+              }
+          }
+          FIN_ARCHIVO_8
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Compilar
+        run: gradle assembleDebug --no-daemon
+
+      - name: Guardar la APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: despertador-youtube-apk
+          path: app/build/outputs/apk/debug/*.apk
